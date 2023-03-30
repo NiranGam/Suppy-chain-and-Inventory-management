@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.0;
+
+contract SupplyChain {
+    address private owner;
+
+    struct product{
+        uint serialnum; // serial number
+        string name;
+        uint quantity;
+        uint threshold;
+    }
+
+    struct Participants{
+        address user;
+    }
+
+    mapping(address => mapping(uint => product)) private Inventory;
+    mapping(address => uint) private productLen;
+    mapping(address => string) private userRoles;
+    mapping(string => Participants[]) private participants;
+
+
+    event ThresholdReached(uint serialnum, string name);
+    event ThresholdUpdate(uint serialnum, string name, uint threshold, string message);
+    event TransferofProducts(address from, uint serial, uint quantity, address to);
+
+    constructor(){
+        owner = msg.sender;
+    }
+
+    function setUserRole(address _user, string memory _role) public {
+        require(msg.sender == owner, "Only owner can set user role");
+        userRoles[_user] = _role;
+        participants[_role].push(Participants(_user));
+
+    }
+
+    function getUsers(string memory _role) public view returns (Participants[] memory) {
+        return participants[_role];
+    }
+
+    modifier onlyManufacturers{
+        require(keccak256(abi.encodePacked(userRoles[msg.sender])) == keccak256(abi.encodePacked("Manufacturers")), "Only manufacturers can add new products into the ecosystem");
+    _;
+    }
+    function addNewProduct(uint _serial, string memory _name , uint _totalQuantity, uint _threshold) public onlyManufacturers {
+        require(_totalQuantity > 0, "Enter a valid quantity");
+        uint count = productLen[msg.sender];
+        bool productExists = false;
+        for (uint i = 0; i < count; i++){
+            if (Inventory[msg.sender][i].serialnum == _serial){
+                Inventory[msg.sender][i].quantity += _totalQuantity;
+                productExists = true;
+                break;
+            }
+        }
+
+        if(!productExists){
+            Inventory[msg.sender][count] = product(_serial, _name, _totalQuantity, _threshold);
+            productLen[msg.sender] = count + 1;
+        }
+    
+    }
+
+    function setThreshold(uint _serial, uint _new_threshold) public {
+        uint length = productLen[msg.sender];
+        for (uint i = 0; i < length; i++){
+            if (Inventory[msg.sender][i].serialnum == _serial){
+                Inventory[msg.sender][i].threshold = _new_threshold;
+                emit ThresholdUpdate(_serial, Inventory[msg.sender][i].name, _new_threshold, "Threshold changed !");
+            break;
+            }
+        }
+    }
+
+    function getAllProducts() public view returns(product[][] memory){
+        uint length = productLen[msg.sender];
+        product[][] memory _product = new product[][](length);
+        for (uint i = 0; i < length; i++){
+            product[] memory result = new product[](1); // names the inner loop result, with 1 length 
+            result[0] = Inventory[msg.sender][i]; // result has max len of 1, hence index 0 to store the struct
+            _product[i] = result;
+        }
+        return _product;
+    }
+
+    function productTransfer(uint _serial, string memory _name, uint _totalQuantity, address _recipient) public {
+        require(_recipient != address(0), "Recipient address cannot be zero");
+        uint length = productLen[msg.sender];
+        for (uint i = 0; i < length; i++){
+            if (Inventory[msg.sender][i].serialnum == _serial){
+                require(Inventory[msg.sender][i].quantity >= _totalQuantity, "Insufficient quantity");
+                Inventory[msg.sender][i].quantity -= _totalQuantity;
+                bool productExists = false;
+                for (uint j = 0; j < productLen[_recipient]; j++){
+                    if (Inventory[_recipient][j].serialnum == _serial){
+                        Inventory[_recipient][j].quantity += _totalQuantity;
+                        productExists = true;
+                        emit TransferofProducts(msg.sender, _serial, _totalQuantity, _recipient);
+                        break;
+                    }
+                }
+                if (!productExists){
+                    Inventory[_recipient][productLen[_recipient]] = product(_serial, _name, _totalQuantity, 0);
+                    productLen[_recipient]++;
+                    emit TransferofProducts(msg.sender, _serial, _totalQuantity, _recipient);
+
+                }
+                if (Inventory[msg.sender][i].quantity <= Inventory[msg.sender][i].threshold ){
+                    emit ThresholdReached(_serial, _name);
+                }
+                break;
+            }
+        }
+    }
+
+}
